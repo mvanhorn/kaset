@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import Foundation
 import Testing
 @testable import Kaset
@@ -273,6 +274,83 @@ extension PlayerServiceWebQueueSyncTests {
         #expect(self.playerService.currentTrack?.videoId == songs[0].videoId)
         #expect(self.playerService.state == .paused)
         #expect(!self.playerService.shouldResumeAfterInterruption)
+    }
+
+    @Test("An admitted Web end advances once when its final observer update arrives first")
+    func admittedWebEndSurvivesFinalObserverUpdate() async throws {
+        let singleton = SingletonPlayerWebView.shared
+        singleton.tearDown()
+        let webKitManager = WebKitManager.makeTestInstance()
+        _ = singleton.getWebView(
+            webKitManager: webKitManager,
+            playerService: self.playerService
+        )
+        defer { singleton.tearDown() }
+
+        let songs = [
+            Song(id: "admitted-end-1", title: "One", artists: [], duration: 180, videoId: "admitted-end-v1"),
+            Song(id: "admitted-end-2", title: "Two", artists: [], duration: 180, videoId: "admitted-end-v2"),
+        ]
+        await self.playerService.playQueue(songs, startingAt: 0)
+        let firstEntryID = try #require(self.playerService.activePlaybackQueueEntryID)
+        let nativeOccurrence = try #require(self.playerService.currentMusicPlaybackOccurrence)
+        let webOccurrence = try #require(self.playerService.bindWebMusicPlaybackOccurrence(
+            documentGeneration: 7,
+            mediaGeneration: 1,
+            nativeGeneration: nativeOccurrence.nativeGeneration,
+            videoId: songs[0].videoId
+        ))
+        self.playerService.musicPlaybackIntentIssuedAtMilliseconds = 1000
+        let intent = self.playerService.currentMusicPlaybackIntent
+        let admission = try #require(self.playerService.admitMusicTerminalBridgeEvent(
+            intent: intent,
+            eventIssuedAtMilliseconds: 1001,
+            playbackOccurrence: webOccurrence
+        ))
+
+        // The observer posts this final paused sample immediately after TRACK_ENDED.
+        // Coordinator admission must consume the occurrence before this neighboring
+        // task can rebind it and fence out the natural-end transition.
+        if self.playerService.acceptsWebMusicPlaybackOccurrence(webOccurrence) {
+            self.playerService.updatePlaybackState(
+                isPlaying: false,
+                progress: 180,
+                duration: 180,
+                observedVideoId: songs[0].videoId
+            )
+            self.playerService.bindWebMusicPlaybackOccurrence(
+                documentGeneration: 7,
+                mediaGeneration: 1,
+                nativeGeneration: nativeOccurrence.nativeGeneration,
+                videoId: songs[0].videoId
+            )
+        }
+        #expect(!self.playerService.acceptsWebMusicPlaybackOccurrence(webOccurrence))
+
+        var navigationRequests: [String] = []
+        self.playerService.onMusicPlaybackNavigationRequested = { videoID, _ in
+            navigationRequests.append(videoID)
+        }
+        await self.playerService.handleTrackEnded(
+            observedVideoId: songs[0].videoId,
+            admission: admission
+        )
+
+        #expect(self.playerService.currentIndex == 1)
+        #expect(self.playerService.activePlaybackQueueEntryID == self.playerService.queueEntryIDs[1])
+        #expect(self.playerService.activePlaybackQueueEntryID != firstEntryID)
+        #expect(self.playerService.currentTrack?.videoId == songs[1].videoId)
+        #expect(self.playerService.pendingPlayVideoId == songs[1].videoId)
+        #expect(navigationRequests == [songs[1].videoId])
+
+        let duplicateAdmission = self.playerService.admitMusicTerminalBridgeEvent(
+            intent: intent,
+            eventIssuedAtMilliseconds: 1002,
+            playbackOccurrence: webOccurrence
+        )
+        #expect(duplicateAdmission == nil)
+        #expect(self.playerService.currentIndex == 1)
+        #expect(navigationRequests == [songs[1].videoId])
     }
 
     @Test("Shuffle admits an already-emitted end for the active occurrence")

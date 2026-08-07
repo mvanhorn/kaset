@@ -77,19 +77,20 @@ extension SingletonPlayerWebView {
             switch type {
             case "TRACK_ENDED":
                 let endedDuringAd = body["isAd"] as? Bool ?? false
+                guard !endedDuringAd,
+                      let admission = self.playerService.admitMusicTerminalBridgeEvent(
+                          intent: musicPlaybackIntent,
+                          eventIssuedAtMilliseconds: eventIssuedAtMilliseconds,
+                          playbackOccurrence: playbackOccurrence
+                      )
+                else { return }
                 Task { @MainActor in
                     guard SingletonPlayerWebView.shared.documentGeneration.accepts(
                         generation: messageDocumentGeneration
-                    ), self.playerService.acceptsMusicTerminalBridgeEvent(
-                        intent: musicPlaybackIntent,
-                        eventIssuedAtMilliseconds: eventIssuedAtMilliseconds
-                    ),
-                        !endedDuringAd
-                    else { return }
+                    ) else { return }
                     await self.playerService.handleTrackEnded(
                         observedVideoId: observedVideoId,
-                        playbackOccurrence: playbackOccurrence,
-                        intent: musicPlaybackIntent
+                        admission: admission
                     )
                 }
             case "REMOTE_NEXT", "REMOTE_PREVIOUS":

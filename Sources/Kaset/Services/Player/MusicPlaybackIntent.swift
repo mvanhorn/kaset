@@ -11,6 +11,17 @@ struct MusicPlaybackIntent: Equatable {
     let generation: UInt64
 }
 
+// MARK: - MusicTerminalPlaybackAdmission
+
+/// A terminal Web event claimed while its intent, media occurrence, and playback
+/// owner are still current. The bridge can hand this across a main-actor task
+/// boundary without letting an adjacent observer update supersede the occurrence.
+struct MusicTerminalPlaybackAdmission: Equatable {
+    let intent: MusicPlaybackIntent
+    let playbackOccurrence: MusicPlaybackOccurrence
+    let queueEntryID: UUID?
+}
+
 // MARK: - MusicRemoteTransportCommand
 
 enum MusicRemoteTransportCommand: Equatable {
@@ -135,6 +146,30 @@ extension PlayerService {
         else { return false }
         return intent.generation >= self.musicPlaybackMinimumAcceptedTerminalIntentGeneration
             && intent.generation <= self.musicPlaybackIntentGeneration
+    }
+
+    /// Validates and consumes a terminal bridge event synchronously at ingress.
+    /// `TRACK_ENDED` is followed immediately by a final `STATE_UPDATE`; claiming
+    /// here prevents that ordinary update from rebinding a newer media occurrence
+    /// before terminal handling reaches the main actor task.
+    func admitMusicTerminalBridgeEvent(
+        intent: MusicPlaybackIntent,
+        eventIssuedAtMilliseconds: Double?,
+        playbackOccurrence: MusicPlaybackOccurrence?
+    ) -> MusicTerminalPlaybackAdmission? {
+        guard self.acceptsMusicTerminalBridgeEvent(
+            intent: intent,
+            eventIssuedAtMilliseconds: eventIssuedAtMilliseconds
+        ), let playbackOccurrence,
+        self.acceptsWebMusicPlaybackOccurrence(playbackOccurrence),
+        self.claimTerminalMusicPlaybackOccurrence(playbackOccurrence)
+        else { return nil }
+
+        return MusicTerminalPlaybackAdmission(
+            intent: intent,
+            playbackOccurrence: playbackOccurrence,
+            queueEntryID: self.activePlaybackQueueEntryID
+        )
     }
 
     func acceptsMusicRemoteCommand(

@@ -536,6 +536,28 @@ extension PlayerService {
             self.logger.debug("Ignoring duplicate track-ended transition for consumed playback occurrence")
             return
         }
+        await self.finishClaimedTrackEnded(observedVideoId: observedVideoId, intent: intent)
+    }
+
+    /// Completes a Web terminal event that was atomically admitted at bridge ingress.
+    func handleTrackEnded(
+        observedVideoId: String?,
+        admission: MusicTerminalPlaybackAdmission
+    ) async {
+        guard self.acceptsMusicPlaybackIntent(admission.intent),
+              self.activePlaybackQueueEntryID == admission.queueEntryID
+        else { return }
+        self.logger.debug("Track ended reported by WebView: \(observedVideoId ?? "unknown")")
+        await self.finishClaimedTrackEnded(
+            observedVideoId: observedVideoId,
+            intent: admission.intent
+        )
+    }
+
+    private func finishClaimedTrackEnded(
+        observedVideoId: String?,
+        intent: MusicPlaybackIntent
+    ) async {
         guard !self.isExplicitPauseIntentActive else {
             self.songNearingEnd = false
             self.logger.debug("Consumed track-ended transition without advancing because pause intent is active")
